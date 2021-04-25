@@ -1,0 +1,176 @@
+using System;
+using System.Collections.Generic;
+using System.Collections;
+using System.Linq;
+using System.IO;
+
+namespace exp
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            Console.WriteLine("Введите количество точек, необходимых для построения графика импульса (целое число):");
+            int AmountPoints;
+
+            while (!int.TryParse(Console.ReadLine(), out AmountPoints))
+            {
+                Console.WriteLine("Введите целое число!");
+            }
+
+            (double,double)[] ArrPoints = new (double,double)[AmountPoints]; //массив точек. Каждая точка представленна в виде кортежа
+            //из двух чисел типа double (x и y координаты). Далее Item1 - это x, Item2 - y
+
+            for(int i = 0; i < ArrPoints.Length; i++)
+            {
+                Console.WriteLine($"Введите значения координат точки {i+1} через пробел (первое значение - x, второе - y) ");
+                if(i == 0) // если точка первая просто вводим данные
+                {
+                    string[] values = Console.ReadLine().Split(" "); // Split делит строку на массив строк по разделителю. У нас пробел
+                    ArrPoints[i].Item1 = double.Parse(values[0]);
+                    ArrPoints[i].Item2 = double.Parse(values[1]);
+                }
+                else // если точка не первая...
+                {
+                    string[] values = Console.ReadLine().Split(" ");
+                    ArrPoints[i].Item1 = double.Parse(values[0]);
+                    ArrPoints[i].Item2 = double.Parse(values[1]);
+                    if(ArrPoints[i].Item1 < ArrPoints[i-1].Item1) // ... то проверяем на корректность ввода данных x последующей точке не должен быть меньше x предыдущей
+                    {
+                        i--;
+                        Console.WriteLine("Значение x данной точки не должно быть меньше чем x предыдущей! Введите это значение заново!");
+                    }
+                }
+
+            }
+
+            F f = ArrPointsToFunc(ArrPoints); // из полученного массива точек получаем функцию
+           
+            double begin = ArrPoints[0].Item1;
+            double end = ArrPoints[ArrPoints.Length - 1].Item1;
+            double T = end - begin; // период функции
+            double w = 2 * Math.PI * 1 / T; // угловая частота
+            double Pc = 1 / T * Integ(x=>f(x)*f(x),1000, begin, end); // мощность функции
+
+            List<double> an = new List< double>(); // список коеффициентов при косинусах
+            List<double> bn = new List<double>();// список коеффициентов при синусах
+
+
+            double a0 = 2/T * Integ(f, 1000, begin, end); 
+
+            double Pk = (a0 * a0 / 4); // считаем первый член формулы получения мощности апроксимированной функции
+
+            int j = 1;
+            while(Pk < 0.95*Pc)
+            {
+                double a = 2 / T * Integ(x => f(x) * Math.Cos(x * j * w), 1000, begin, end);
+                an.Add(a);
+                double b = 2 / T * Integ(x => f(x) * Math.Sin(x * j * w), 1000, begin, end);
+                bn.Add(b);
+                double A = Math.Sqrt(a*a + b*b);
+                Pk += A * A / 2; // добавляем к мощности мощность каждой гармоники
+                j++;
+            }
+
+          
+
+            Console.WriteLine();
+            Console.WriteLine($"Мощность сигнала: {Pc}") ;
+            Console.WriteLine($"Мощность апроксимированной функции: {Pk}");
+            Console.WriteLine($"Количество коеффициентов необходимое для выполнения условия потери мощности: {an.Count}");
+
+            StreamWriter X = new StreamWriter("X.txt");
+            StreamWriter FuncY = new StreamWriter("FuncY.txt");
+
+            StreamWriter FurieY = new StreamWriter("FurieY.txt");
+
+            double step = (end - begin) / 1000;
+
+            for(int i = 0; i < 1000; i++)
+            {
+                X.WriteLine(begin + i*step);
+                FuncY.WriteLine(f(begin + i * step));
+            }
+
+            X.Close();
+            FuncY.Close();
+
+            for(int i = 0; i<1000; i++)
+            {
+                
+                double x = begin + step * i;
+                double y = 0;
+                for(int k = 0; k < an.Count; k++)
+                {
+                    
+                    y += an[k] * Math.Cos(x * (k+1) * w) + bn[k] * Math.Sin(x * (k + 1) * w) ;
+                }
+                y += a0 / 2;
+                FurieY.WriteLine(y);
+            }
+            FurieY.Close();
+
+            Console.ReadKey();
+            
+        }
+
+        public static double Integ(F y, int stepsAmount, double begin = 0, double end = 0.000232) // то же интегрирование
+        {
+            double sum = 0;
+            double step = (end - begin) / stepsAmount;
+            double x0 = begin;
+            double x1 = begin + step;
+
+            for (int i = 0; i < stepsAmount; i++)
+            {
+                sum += y((x0 + x1) / 2) * step;
+                x0 = x1;
+                x1 += step;
+            }
+
+            return sum;
+        }
+
+        public static F ArrPointsToFunc((double,double)[] arr) //из массива точек получаем готовую функцию
+        {
+            List<F> functions = new List<F>();
+            for(int i = 0; i < arr.Length - 1; i++)
+            {
+                if (arr[i].Item1 == arr[i + 1].Item1) continue; // если иксы точек равны никакой функции между ними нет
+
+                functions.Add(GetFunc(arr[i], arr[i + 1])); // запихиваем две точки в метод получения прямой(отрезка) по двум точкам
+            }
+
+            F ResultFunction = delegate(double x)
+            {
+                double value = 0;
+                foreach(F func in functions)
+                {
+                    value += func(x); // т.к. все функции кроме одной дают 0 на заданном интервале такое решение имеет место быть, хотя оно и не очень производительно
+                }
+                return value;
+            };
+            return ResultFunction;// результирующая функция - набор кусочно-линейных функций собранная в одну функцию
+        }
+
+        public static F GetFunc((double,double) point1, (double,double) point2) // получение кусочно-линейной функции на заданном интевале
+        {
+            F function = delegate (double x)
+            {
+                if (x < point1.Item1 || x >= point2.Item1) return 0; // если точка находиться вне диапазона функции, функция возвращает 0
+
+                double a = (point2.Item2 - point1.Item2) / (point2.Item1 - point1.Item1); // ищем коеффициенты для уравнения прямой
+                double b = point1.Item2 - a * point1.Item1;
+
+                return a * x + b;
+            };
+
+            return function;
+        }
+
+    }
+
+    public delegate double F(double x); // тот же делегат
+
+   
+}
